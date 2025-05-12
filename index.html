@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Ammo.js Polyhedron Drop</title>
+    <style> body { margin: 0; } </style>
+</head>
+<body>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/libs/ammo.wasm.js"></script>
+    <script>
+Ammo().then((Ammo) => {
+    // Three.js setup
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setClearColor(0xaaaaaa);
+    document.body.appendChild(renderer.domElement);
+
+    // Physics setup
+    const collisionConfiguration = new Ammo.btDefaultCollisionConfiguration();
+    const dispatcher = new Ammo.btCollisionDispatcher(collisionConfiguration);
+    const broadphase = new Ammo.btDbvtBroadphase();
+    const solver = new Ammo.btSequentialImpulseConstraintSolver();
+    const dynamicsWorld = new Ammo.btDiscreteDynamicsWorld(dispatcher, broadphase, solver, collisionConfiguration);
+    dynamicsWorld.setGravity(new Ammo.btVector3(0, -9.8, 0));
+
+    // Create ground plane
+    const groundShape = new Ammo.btStaticPlaneShape(new Ammo.btVector3(0, 1, 0), 0);
+    const groundTransform = new Ammo.btTransform();
+    groundTransform.setIdentity();
+    const groundMotionState = new Ammo.btDefaultMotionState(groundTransform);
+    const groundRigidBody = new Ammo.btRigidBody(
+        new Ammo.btRigidBodyConstructionInfo(0, groundMotionState, groundShape, new Ammo.btVector3(0, 0, 0))
+    );
+    dynamicsWorld.addRigidBody(groundRigidBody);
+
+    // Ground visualization
+    const groundGeometry = new THREE.PlaneGeometry(20, 20);
+    const groundMaterial = new THREE.MeshPhongMaterial({ color: 0x444444, side: THREE.DoubleSide });
+    const groundMesh = new THREE.Mesh(groundGeometry, groundMaterial);
+    groundMesh.rotation.x = Math.PI / 2;
+    scene.add(groundMesh);
+
+    // Create polyhedron function
+    function createPolyhedron(faces) {
+        let vertices = [];
+        const scale = 0.5; // Physics shape scale
+
+        // Generate vertices for different polyhedrons
+        switch(faces) {
+            case 4: // Tetrahedron
+                vertices = [
+                    [1, 1, 1], [-1, -1, 1],
+                    [-1, 1, -1], [1, -1, -1]
+                ];
+                break;
+            case 6: // Cube
+                for(let x of [-1,1]) for(let y of [-1,1]) for(let z of [-1,1]) 
+                    vertices.push([x, y, z]);
+                break;
+            case 8: // Octahedron
+                vertices = [
+                    [1,0,0], [-1,0,0], [0,1,0],
+                    [0,-1,0], [0,0,1], [0,0,-1]
+                ];
+                break;
+            case 20: // Icosahedron
+                const t = (1 + Math.sqrt(5)) / 2;
+                vertices = [
+                    [-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0],
+                    [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t],
+                    [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]
+                ];
+                break;
+            default: throw new Error('Supported faces: 4,6,8,20');
+        }
+
+        // Create physics shape
+        const convexShape = new Ammo.btConvexHullShape();
+        vertices.forEach(v => {
+            const vec = new Ammo.btVector3(v[0], v[1], v[2]);
+            convexShape.addPoint(vec);
+            Ammo.destroy(vec);
+        });
+        convexShape.setLocalScaling(new Ammo.btVector3(scale, scale, scale));
+
+        // Create rigid body
+        const mass = 1;
+        const localInertia = new Ammo.btVector3(0, 0, 0);
+        convexShape.calculateLocalInertia(mass, localInertia);
+
+        const startTransform = new Ammo.btTransform();
+        startTransform.setIdentity();
+        startTransform.setOrigin(new Ammo.btVector3(0, 5, 0));
+        const motionState = new Ammo.btDefaultMotionState(startTransform);
+
+        const rbInfo = new Ammo.btRigidBodyConstructionInfo(
+            mass, motionState, convexShape, localInertia
+        );
+        const body = new Ammo.btRigidBody(rbInfo);
+        dynamicsWorld.addRigidBody(body);
+
+        // Create Three.js mesh
+        let geometry;
+        switch(faces) {
+            case 4: geometry = new THREE.TetrahedronGeometry(scale * 1.732); break;
+            case 6: geometry = new THREE.BoxGeometry(scale*2, scale*2, scale*2); break;
+            case 8: geometry = new THREE.OctahedronGeometry(scale * 1.414); break;
+            case 20: geometry = new THREE.IcosahedronGeometry(scale * 1.902); break;
+        }
+        const material = new THREE.MeshPhongMaterial({ 
+            color: 0x00ff88,
+            shininess: 100,
+            wireframe: false
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        scene.add(mesh);
+
+        return { body, mesh };
+    }
+
+    // Create a polyhedron (change the number to 4, 6, 8, or 20)
+    const polyhedron = createPolyhedron(4);
+
+    // Lighting
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(5, 5, 5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0x404040));
+
+    camera.position.set(8, 5, 8);
+    camera.lookAt(0, 0, 0);
+
+    // Animation loop
+    function animate() {
+        requestAnimationFrame(animate);
+
+        // Update physics
+        dynamicsWorld.stepSimulation(1/60, 10);
+
+        // Update mesh position/orientation
+        const transform = new Ammo.btTransform();
+        polyhedron.body.getMotionState().getWorldTransform(transform);
+        const origin = transform.getOrigin();
+        const rotation = transform.getRotation();
+        
+        polyhedron.mesh.position.set(origin.x(), origin.y(), origin.z());
+        polyhedron.mesh.quaternion.set(
+            rotation.x(), 
+            rotation.y(), 
+            rotation.z(), 
+            rotation.w()
+        );
+
+        renderer.render(scene, camera);
+        Ammo.destroy(transform);
+    }
+
+    animate();
+});
+    </script>
+</body>
+</html>
